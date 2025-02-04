@@ -19,6 +19,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       home: Scaffold(
+        resizeToAvoidBottomInset: false,
         backgroundColor: const Color(0xFFEFEFF4),
         appBar: AppBar(
           elevation: 1,
