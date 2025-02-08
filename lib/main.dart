@@ -1,15 +1,23 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-
+import 'dart:io';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_places_flutter/google_places_flutter.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: ".env");
   runApp(MyApp());
 }
 
@@ -19,6 +27,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       home: Scaffold(
+        resizeToAvoidBottomInset: false,
         backgroundColor: const Color(0xFFEFEFF4),
         appBar: AppBar(
           elevation: 1,
@@ -70,6 +79,8 @@ class _MapScreenState extends State<MapScreen> {
   String _locationAddress = "Fetching location...";
   TextEditingController _searchController = TextEditingController();
   FocusNode _searchFocusNode = FocusNode();
+  String apiKey = dotenv.env['MAPS_API_KEY'] ?? 'No API Key';
+  
   @override
   void initState() {
     super.initState();
@@ -201,11 +212,7 @@ Future<void> _updateLocationDetails(double latitude, double longitude) async {
       String administrativeArea = place.administrativeArea ?? ""; // State
       String postalCode = place.postalCode ?? ""; // Postal code
       String country = place.country ?? ""; // Country name
-
-      // Combine building number and street name
       String addressLine = [buildingNumber, streetName].where((part) => part.isNotEmpty).join(" ");
-
-      // Construct full address
       String fullAddress = [
         if (locationName.isNotEmpty) locationName,
         if (addressLine.isNotEmpty) addressLine,
@@ -240,10 +247,7 @@ Future<void> _updateLocationDetails(double latitude, double longitude) async {
     print("Error in reverse geocoding: $e");
   }
 }
-
-// Helper method to clean segment identifiers (e.g., numbers like "91")
 String _cleanSegmentIdentifier(String input) {
-  // Use regex to remove numeric segment identifiers at the beginning of the string
   RegExp segmentPattern = RegExp(r"^\d+\s*");
   return input.replaceAll(segmentPattern, "").trim();
 }
@@ -303,7 +307,7 @@ String _cleanSegmentIdentifier(String input) {
     ),
     child: GooglePlaceAutoCompleteTextField(
       textEditingController: _searchController,
-      googleAPIKey: "AIzaSyCazP9litaMcU6wy-MkHk4PN0NrY1P3o0M", // Replace with your API Key
+      googleAPIKey: apiKey, // Replace with your API Key
       inputDecoration: InputDecoration(
         border: InputBorder.none,
         hintText: "Search location...",
@@ -338,7 +342,6 @@ String _cleanSegmentIdentifier(String input) {
     ),
   ),
 ),
-
               Positioned(
                 bottom: 50,
                 left: MediaQuery.of(context).size.width / 2 - 65,
@@ -460,7 +463,9 @@ String _cleanSegmentIdentifier(String input) {
               ),
             ),
             onPressed: () {print(locationName);
-            print(locationAddress);},
+            print(locationAddress);
+            _showmodalbottomsheet(context);
+            },
             child: Text(
               "CONFIRM LOCATION",
               style: TextStyle(
@@ -475,4 +480,446 @@ String _cleanSegmentIdentifier(String input) {
       ),
     );
   }
+void _showmodalbottomsheet(BuildContext context) {
+  TextEditingController _directionsController = TextEditingController();
+  ValueNotifier<int> _charCount = ValueNotifier<int>(0);
+  TextEditingController _houseController = TextEditingController();
+  _directionsController.addListener(() {
+    _charCount.value = _directionsController.text.length;
+  });
+  ValueNotifier<String> selectedTag = ValueNotifier<String>("");
+  FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  ValueNotifier<bool> isRecording = ValueNotifier<bool>(false);
+  String? _errorText;
+  String? recordedFilePath;
+
+  Future<void> _initRecorder() async {
+    await Permission.microphone.request();
+    if (await Permission.microphone.isGranted) {
+      await _recorder.openRecorder();
+      _recorder.setSubscriptionDuration(Duration(milliseconds: 500));
+    } else {
+      print("Microphone permission denied");
+    }
+  }
+  Future<void> _startRecording() async {
+    Directory tempDir = await getTemporaryDirectory();
+    String filePath = "${tempDir.path}/recorded_audio.aac";
+
+    await _recorder.startRecorder(
+      toFile: filePath,
+      codec: Codec.aacADTS,
+    );
+
+    recordedFilePath = filePath;
+    isRecording.value = true;
+  }
+
+  // Stop Recording
+Future<void> _stopRecording() async {
+  // Stop the recorder and get the temporary file path
+  String? tempPath = await _recorder.stopRecorder();
+  isRecording.value = false;
+
+  if (tempPath != null) {
+    // Save the recording to the app's documents directory on the mobile device
+    Directory appDir = await getApplicationDocumentsDirectory();
+    String mobilePath = "${appDir.path}/recorded_audio.aac";
+
+    File tempFile = File(tempPath);
+    await tempFile.copy(mobilePath); // Save the file to the mobile device's local storage
+    recordedFilePath = mobilePath;
+    print("Recording saved on mobile device at: $recordedFilePath");
+
+    // Save the file to the Flutter project directory
+    try {
+      Directory projectDir = Directory('./flutter_audio_files');
+      if (!projectDir.existsSync()) {
+        projectDir.createSync(recursive: true); // Create the directory if it doesn't exist
+      }
+      String projectPath = "${projectDir.path}/recorded_audio.aac";
+      await tempFile.copy(projectPath); // Copy the file to the project directory
+      print("Recording saved in Flutter project directory: $projectPath");
+    } catch (e) {
+      print("Error saving to Flutter project directory: $e");
+    }
+  } else {
+    print("Error: TempPath is null. Recording was not saved.");
+  }
+}
+
+Future<String?> _getSavedRecording() async {
+  // Retrieve stored file path from SharedPreferences
+  SharedPreferences prefs = await SharedPreferences.getInstance();
+  return prefs.getString("saved_audio_path");
+}
+
+Future<void> _loadSavedRecording() async {
+  // Load the saved recording path from SharedPreferences
+  String? savedPath = await _getSavedRecording();
+  if (savedPath != null && savedPath.isNotEmpty) {
+    recordedFilePath = savedPath;
+    print("Loaded saved recording path: $recordedFilePath");
+  } else {
+    print("No saved recording found.");
+  }
+}
+
+
+
+
+
+  _initRecorder();
+  _loadSavedRecording();
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (context) {
+      return FractionallySizedBox(
+        heightFactor: 0.8, // Covers 80% of the screen height
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.location_on, color: Colors.green, size: 24),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _locationName, // Location Name (Bold, Poppins)
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 21,
+                          fontWeight: FontWeight.bold,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 15),
+                Text(
+                  _locationAddress, // Location Address (Poppins)
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 15,
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 20),
+
+                // Alert Box (Beige Background)
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Color(0xFFFFF3E0), // Light beige background
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    "A detailed address will help our Delivery Partner reach your doorstep easily",
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 14,
+                      color: Colors.brown,
+                    ),
+                  ),
+                ),
+                SizedBox(height: 20),
+ 
+                // Address Input Fields
+                TextField(
+                  
+  
+                  controller: _houseController,
+                  decoration: InputDecoration(
+                    errorText: _errorText,
+                    labelText: "HOUSE / FLAT / BLOCK NO.",
+                    labelStyle: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 14,
+                      color: Colors.grey,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    
+                  ),
+                ),
+                SizedBox(height: 15),
+                TextField(
+  decoration: InputDecoration(
+    label: Text.rich(
+      TextSpan(
+        text: "APARTMENT / ROAD / AREA",
+        style: TextStyle(
+          fontFamily: 'Poppins',
+          fontSize: 14,
+          color: Colors.grey,
+          fontWeight: FontWeight.bold,
+        ),
+        children: [
+          TextSpan(
+            text: "(OPTIONAL)",
+            style: TextStyle(
+              fontWeight: FontWeight.normal,
+              color: Colors.grey,
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+),
+
+                SizedBox(height: 15),
+
+                TextField(
+  decoration: InputDecoration(
+    label: Text.rich(
+      TextSpan(
+        text: "DIRECTIONS TO REACH ",
+        style: TextStyle(
+          fontFamily: 'Poppins',
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+          color: Colors.grey, // Bold for main text
+        ),
+        children: [
+          TextSpan(
+            text: "(OPTIONAL)",
+            style: TextStyle(
+              fontWeight: FontWeight.normal, // Normal for "(OPTIONAL)"
+              color: Colors.grey,
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+),
+
+                SizedBox(height: 20),
+
+                // Voice Recording Button
+                ValueListenableBuilder<bool>(
+                valueListenable: isRecording,
+                builder: (context, recording, child) {
+                  return GestureDetector(
+                    onTap: () async {
+                      if (!recording) {
+                        await _startRecording();
+                      } else {
+                        await _stopRecording();
+                        print("Recording saved at: $recordedFilePath");
+                      }
+                    },
+                    child: Container(
+                      padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[200], // Light grey background
+                        borderRadius: BorderRadius.circular(50),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            recording ? "Recording... Tap to stop" : "Tap to record voice directions",
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: recording ? Colors.red : Colors.black,
+                            ),
+                          ),
+                          Container(
+                            padding: EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: recording ? Colors.red[300] : Colors.grey[300],
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              recording ? Icons.stop : Icons.mic,
+                              color: recording ? Colors.white : Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+                    
+                SizedBox(height: 15),
+
+                // Directions Input Box with Counter Inside (Bottom Left)
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200], // Light grey background
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Stack(
+                    children: [
+                      TextField(
+                        controller: _directionsController,
+                        maxLength: 200,
+                        decoration: InputDecoration(
+                          hintText: "e.g. Ring the bell on the red gate",
+                          hintStyle: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 14,
+                            color: Colors.grey,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(
+                            vertical: 12,
+                            horizontal: 16,
+                          ),
+                        ),
+                        maxLines: 3,
+                      ),
+                      // Positioned Character Counter (Bottom Left)
+                      
+                    ],
+                  ),
+                ),
+                SizedBox(height: 20),
+                Text(
+                  "SAVE AS",
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                SizedBox(height: 10),
+
+                ValueListenableBuilder<String>(
+  valueListenable: selectedTag,
+  builder: (context, selected, child) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          
+          children: [
+            _buildTagButton("Home", Icons.home, selected, selectedTag),
+            SizedBox(width: 20), // Space between buttons
+            _buildTagButton("Work", Icons.work, selected, selectedTag),
+          ],
+        ),
+        SizedBox(height: 15), // Space between rows
+        Row(
+          
+          children: [
+            _buildTagButton("Friends and Family", Icons.group, selected, selectedTag),
+            SizedBox(width: 20), // Space between buttons
+            _buildTagButton("Other", Icons.location_on, selected, selectedTag), // Location marker icon for 'Other'
+          ],
+        ),
+      ],
+    );
+  },
+),
+                SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green, // Match image color
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    onPressed: () async {
+                      // Handle button press
+                      if (_houseController.text.isEmpty) {
+    // Show an error message if the field is empty
+        setState(() {
+      _errorText = _houseController.text.isEmpty ? "This field cannot be empty" : null;
+                      });
+    // ScaffoldMessenger.of(context).showSnackBar(
+    //   SnackBar(content: Text("Please enter House/Flat/Block No.")),
+    // );
+    return;
+  }
+
+  if (selectedTag.value.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Please select a tag (Home, Work, etc.)")),
+    );
+    return;
+  }
+
+
+  // Show success message
+                    },
+                    child: Text(
+                      "ENTER HOUSE / FLAT / BLOCK NO.",
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(height: MediaQuery.of(context).viewInsets.bottom), // Prevent keyboard overlap
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+Widget _buildTagButton(String label, IconData icon, String selected, ValueNotifier<String> notifier) {
+  bool isSelected = selected == label;
+
+  return GestureDetector(
+    onTap: () {
+      notifier.value = isSelected ? "" : label; // Toggle selection
+    },
+    child: Container(
+      padding: EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+      decoration: BoxDecoration(
+        color: isSelected ? Colors.green.withOpacity(0.2) : Colors.grey[200],
+        borderRadius: BorderRadius.circular(50), // Rounded corners
+        border: Border.all(
+          color: isSelected ? Colors.black : Colors.grey,
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            color: isSelected ? Colors.black : Colors.grey,
+            size: 22,
+          ),
+          SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: isSelected ? Colors.black : Colors.grey,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 }

@@ -49,6 +49,8 @@
 	<string>We need access to your location to show your position on the map.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>We need access to your location to show your position on the map.</string>
+	<key>NSMicrophoneUsageDescription</key>
+    <string>We need microphone access to record audio.</string>
 
 </dict>
 

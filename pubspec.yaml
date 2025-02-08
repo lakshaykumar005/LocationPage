@@ -35,8 +35,13 @@ dependencies:
   google_maps_flutter: ^2.5.0
   geolocator: ^9.0.2
   geocoding: ^2.0.5
-  permission_handler: ^10.2.0
+  permission_handler: ^11.3.1
   google_places_flutter: ^2.0.0
+  flutter_dotenv: ^5.2.1
+  flutter_sound: ^9.1.0
+  path_provider: ^2.1.5
+  shared_preferences: ^2.5.1
+
 
 
 dev_dependencies:
@@ -65,7 +70,7 @@ flutter:
   assets:
     - assets/map_style.json
     - assets/custom_marker.png
-
+    - .env
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 
