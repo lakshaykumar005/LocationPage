@@ -1,20 +1,60 @@
 import 'dart:async';
-import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'dart:io';
-import 'package:flutter_sound/flutter_sound.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_places_flutter/google_places_flutter.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+Future<File> _getJsonFile() async {
+  // Get the application documents directory
+  Directory appDir = await getApplicationDocumentsDirectory();
+  
+  // Define the path to the JSON file
+  String jsonFilePath = '${appDir.path}/user_responses.json';
+  
+  // Create the file if it doesn't exist
+  File jsonFile = File(jsonFilePath);
+  if (!await jsonFile.exists()) {
+    await jsonFile.writeAsString('[]'); // Initialize with an empty array
+  }
+  
+  return jsonFile;
+}
+Future<List<dynamic>> _readJsonFile() async {
+  // Get the JSON file
+  File jsonFile = await _getJsonFile();
+  
+  // Read the file content
+  String jsonString = await jsonFile.readAsString();
+  
+  // Decode the JSON string into a List
+  List<dynamic> jsonData = jsonDecode(jsonString);
+  
+  return jsonData;
+}
+
+Future<void> _writeJsonFile(List<dynamic> jsonData) async {
+  // Get the JSON file
+  File jsonFile = await _getJsonFile();
+  
+  // Encode the updated data to a JSON string
+  String updatedJsonString = jsonEncode(jsonData);
+  
+  // Write the updated JSON string to the file
+  await jsonFile.writeAsString(updatedJsonString);
+  
+  print("JSON file updated successfully.");
+}
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
@@ -464,7 +504,7 @@ String _cleanSegmentIdentifier(String input) {
             ),
             onPressed: () {print(locationName);
             print(locationAddress);
-            _showmodalbottomsheet(context);
+            _showModalBottomSheet(context);
             },
             child: Text(
               "CONFIRM LOCATION",
@@ -480,9 +520,10 @@ String _cleanSegmentIdentifier(String input) {
       ),
     );
   }
-void _showmodalbottomsheet(BuildContext context) {
+void _showModalBottomSheet(BuildContext context) {
   TextEditingController _directionsController = TextEditingController();
   ValueNotifier<int> _charCount = ValueNotifier<int>(0);
+  TextEditingController _apartmentController = TextEditingController();
   TextEditingController _houseController = TextEditingController();
   _directionsController.addListener(() {
     _charCount.value = _directionsController.text.length;
@@ -490,8 +531,11 @@ void _showmodalbottomsheet(BuildContext context) {
   ValueNotifier<String> selectedTag = ValueNotifier<String>("");
   FlutterSoundRecorder _recorder = FlutterSoundRecorder();
   ValueNotifier<bool> isRecording = ValueNotifier<bool>(false);
-  String? _errorText;
   String? recordedFilePath;
+
+  // Error messages
+  ValueNotifier<String?> _houseError = ValueNotifier<String?>(null);
+  ValueNotifier<String?> _tagError = ValueNotifier<String?>(null);
 
   Future<void> _initRecorder() async {
     await Permission.microphone.request();
@@ -502,6 +546,7 @@ void _showmodalbottomsheet(BuildContext context) {
       print("Microphone permission denied");
     }
   }
+
   Future<void> _startRecording() async {
     Directory tempDir = await getTemporaryDirectory();
     String filePath = "${tempDir.path}/recorded_audio.aac";
@@ -515,62 +560,84 @@ void _showmodalbottomsheet(BuildContext context) {
     isRecording.value = true;
   }
 
-  // Stop Recording
-Future<void> _stopRecording() async {
-  // Stop the recorder and get the temporary file path
-  String? tempPath = await _recorder.stopRecorder();
-  isRecording.value = false;
+  Future<void> _stopRecording() async {
+    String? tempPath = await _recorder.stopRecorder();
+    isRecording.value = false;
 
-  if (tempPath != null) {
-    // Save the recording to the app's documents directory on the mobile device
-    Directory appDir = await getApplicationDocumentsDirectory();
-    String mobilePath = "${appDir.path}/recorded_audio.aac";
+    if (tempPath != null) {
+      Directory appDir = await getApplicationDocumentsDirectory();
+      String mobilePath = "${appDir.path}/recorded_audio.aac";
 
-    File tempFile = File(tempPath);
-    await tempFile.copy(mobilePath); // Save the file to the mobile device's local storage
-    recordedFilePath = mobilePath;
-    print("Recording saved on mobile device at: $recordedFilePath");
+      File tempFile = File(tempPath);
+      await tempFile.copy(mobilePath);
+      recordedFilePath = mobilePath;
+      print("Recording saved on mobile device at: $recordedFilePath");
 
-    // Save the file to the Flutter project directory
-    try {
-      Directory projectDir = Directory('./flutter_audio_files');
-      if (!projectDir.existsSync()) {
-        projectDir.createSync(recursive: true); // Create the directory if it doesn't exist
+      try {
+        Directory projectDir = Directory('./flutter_audio_files');
+        if (!projectDir.existsSync()) {
+          projectDir.createSync(recursive: true);
+        }
+        String projectPath = "${projectDir.path}/recorded_audio.aac";
+        await tempFile.copy(projectPath);
+        print("Recording saved in Flutter project directory: $projectPath");
+      } catch (e) {
+        print("Error saving to Flutter project directory: $e");
       }
-      String projectPath = "${projectDir.path}/recorded_audio.aac";
-      await tempFile.copy(projectPath); // Copy the file to the project directory
-      print("Recording saved in Flutter project directory: $projectPath");
-    } catch (e) {
-      print("Error saving to Flutter project directory: $e");
+    } else {
+      print("Error: TempPath is null. Recording was not saved.");
     }
-  } else {
-    print("Error: TempPath is null. Recording was not saved.");
   }
-}
 
-Future<String?> _getSavedRecording() async {
-  // Retrieve stored file path from SharedPreferences
-  SharedPreferences prefs = await SharedPreferences.getInstance();
-  return prefs.getString("saved_audio_path");
-}
-
-Future<void> _loadSavedRecording() async {
-  // Load the saved recording path from SharedPreferences
-  String? savedPath = await _getSavedRecording();
-  if (savedPath != null && savedPath.isNotEmpty) {
-    recordedFilePath = savedPath;
-    print("Loaded saved recording path: $recordedFilePath");
-  } else {
-    print("No saved recording found.");
+  Future<String?> _getSavedRecording() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    return prefs.getString("saved_audio_path");
   }
+
+  Future<void> _loadSavedRecording() async {
+    String? savedPath = await _getSavedRecording();
+    if (savedPath != null && savedPath.isNotEmpty) {
+      recordedFilePath = savedPath;
+      print("Loaded saved recording path: $recordedFilePath");
+    } else {
+      print("No saved recording found.");
+    }
+  }
+  
+  Future<void> _saveUserResponse({
+  required String locationName,
+  required String locationAddress,
+  required String houseFlatBlockNo,
+  String? apartmentRoadArea,
+  String? directionsToReach,
+  required String selectedTag,
+}) async {
+  // Read the existing JSON data
+  List<dynamic> jsonData = await _readJsonFile();
+
+  // Create a new response object
+  Map<String, dynamic> newResponse = {
+    "locationName": locationName,
+    "locationAddress": locationAddress,
+    "houseFlatBlockNo": houseFlatBlockNo,
+    "apartmentRoadArea": apartmentRoadArea,
+    "directionsToReach": directionsToReach,
+    "selectedTag": selectedTag,
+  };
+
+  // Add the new response to the existing data
+  jsonData.add(newResponse);
+
+  // Write the updated data back to the file
+  await _writeJsonFile(jsonData);
+
+  File jsonFile = await _getJsonFile();
+  print("User response saved to JSON file at: ${jsonFile.path}");
 }
-
-
-
-
 
   _initRecorder();
   _loadSavedRecording();
+
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -593,7 +660,7 @@ Future<void> _loadSavedRecording() async {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _locationName, // Location Name (Bold, Poppins)
+                        _locationName,
                         style: TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 21,
@@ -606,7 +673,7 @@ Future<void> _loadSavedRecording() async {
                 ),
                 SizedBox(height: 15),
                 Text(
-                  _locationAddress, // Location Address (Poppins)
+                  _locationAddress,
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 15,
@@ -620,7 +687,7 @@ Future<void> _loadSavedRecording() async {
                 Container(
                   padding: EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Color(0xFFFFF3E0), // Light beige background
+                    color: Color(0xFFFFF3E0),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -633,14 +700,11 @@ Future<void> _loadSavedRecording() async {
                   ),
                 ),
                 SizedBox(height: 20),
- 
+
                 // Address Input Fields
                 TextField(
-                  
-  
                   controller: _houseController,
                   decoration: InputDecoration(
-                    errorText: _errorText,
                     labelText: "HOUSE / FLAT / BLOCK NO.",
                     labelStyle: TextStyle(
                       fontFamily: 'Poppins',
@@ -648,119 +712,139 @@ Future<void> _loadSavedRecording() async {
                       color: Colors.grey,
                       fontWeight: FontWeight.bold,
                     ),
-                    
                   ),
                 ),
-                SizedBox(height: 15),
-                TextField(
-  decoration: InputDecoration(
-    label: Text.rich(
-      TextSpan(
-        text: "APARTMENT / ROAD / AREA",
-        style: TextStyle(
-          fontFamily: 'Poppins',
-          fontSize: 14,
-          color: Colors.grey,
-          fontWeight: FontWeight.bold,
-        ),
-        children: [
-          TextSpan(
-            text: "(OPTIONAL)",
-            style: TextStyle(
-              fontWeight: FontWeight.normal,
-              color: Colors.grey,
-            ),
-          ),
-        ],
-      ),
-    ),
-  ),
-),
-
+                ValueListenableBuilder<String?>(
+                  valueListenable: _houseError,
+                  builder: (context, error, child) {
+                    return error != null
+                        ? Padding(
+                            padding: EdgeInsets.only(top: 5),
+                            child: Text(
+                              error,
+                              style: TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 12,
+                                color: Colors.red[900],
+                                    fontWeight: FontWeight.bold
+                              ),
+                            ),
+                          )
+                        : SizedBox.shrink();
+                  },
+                ),
                 SizedBox(height: 15),
 
                 TextField(
-  decoration: InputDecoration(
-    label: Text.rich(
-      TextSpan(
-        text: "DIRECTIONS TO REACH ",
-        style: TextStyle(
-          fontFamily: 'Poppins',
-          fontSize: 14,
-          fontWeight: FontWeight.bold,
-          color: Colors.grey, // Bold for main text
-        ),
-        children: [
-          TextSpan(
-            text: "(OPTIONAL)",
-            style: TextStyle(
-              fontWeight: FontWeight.normal, // Normal for "(OPTIONAL)"
-              color: Colors.grey,
-            ),
-          ),
-        ],
-      ),
-    ),
-  ),
-),
-
-                SizedBox(height: 20),
-
-                // Voice Recording Button
-                ValueListenableBuilder<bool>(
-                valueListenable: isRecording,
-                builder: (context, recording, child) {
-                  return GestureDetector(
-                    onTap: () async {
-                      if (!recording) {
-                        await _startRecording();
-                      } else {
-                        await _stopRecording();
-                        print("Recording saved at: $recordedFilePath");
-                      }
-                    },
-                    child: Container(
-                      padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200], // Light grey background
-                        borderRadius: BorderRadius.circular(50),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  controller: _apartmentController,
+                  decoration: InputDecoration(
+                    label: Text.rich(
+                      TextSpan(
+                        text: "APARTMENT / ROAD / AREA",
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 14,
+                          color: Colors.grey,
+                          fontWeight: FontWeight.bold,
+                        ),
                         children: [
-                          Text(
-                            recording ? "Recording... Tap to stop" : "Tap to record voice directions",
+                          TextSpan(
+                            text: "(OPTIONAL)",
                             style: TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: recording ? Colors.red : Colors.black,
-                            ),
-                          ),
-                          Container(
-                            padding: EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: recording ? Colors.red[300] : Colors.grey[300],
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              recording ? Icons.stop : Icons.mic,
-                              color: recording ? Colors.white : Colors.grey[700],
+                              fontWeight: FontWeight.normal,
+                              color: Colors.grey,
                             ),
                           ),
                         ],
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                ),
+                SizedBox(height: 15),
+
+                
+                  
                     
+                      RichText(
+  text: TextSpan(
+    text: "DIRECTIONS TO REACH ",
+    style: TextStyle(
+      fontFamily: 'Poppins',
+      fontSize: 14,
+      fontWeight: FontWeight.bold,
+      color: Colors.grey,
+    ),
+    children: [
+      TextSpan(
+        text: "(OPTIONAL)",
+        style: TextStyle(
+          fontWeight: FontWeight.normal, // This is optional since it's the default
+          color: Colors.grey,
+        ),
+      ),
+    ],
+  ),
+),
+                    
+                    
+                  
+                
+                SizedBox(height: 10),
+
+                // Voice Recording Button
+                ValueListenableBuilder<bool>(
+                  valueListenable: isRecording,
+                  builder: (context, recording, child) {
+                    return GestureDetector(
+                      onTap: () async {
+                        if (!recording) {
+                          await _startRecording();
+                        } else {
+                          await _stopRecording();
+                          print("Recording saved at: $recordedFilePath");
+                        }
+                      },
+                      child: Container(
+                        padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[200],
+                          borderRadius: BorderRadius.circular(50),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              recording ? "Recording... Tap to stop" : "Tap to record voice directions",
+                              style: TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: recording ? Colors.red : Colors.black,
+                              ),
+                            ),
+                            Container(
+                              padding: EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: recording ? Colors.red[300] : Colors.grey[300],
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                recording ? Icons.stop : Icons.mic,
+                                color: recording ? Colors.white : Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 SizedBox(height: 15),
 
                 // Directions Input Box with Counter Inside (Bottom Left)
                 Container(
                   decoration: BoxDecoration(
-                    color: Colors.grey[200], // Light grey background
+                    color: Colors.grey[200],
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Stack(
@@ -783,83 +867,122 @@ Future<void> _loadSavedRecording() async {
                         ),
                         maxLines: 3,
                       ),
-                      // Positioned Character Counter (Bottom Left)
-                      
                     ],
                   ),
                 ),
                 SizedBox(height: 20),
-                Text(
-                  "SAVE AS",
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey[700],
-                  ),
+
+                // Save As Section with Error Message
+                Row(
+                  children: [
+                    Text(
+                      "SAVE AS",
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    ValueListenableBuilder<String?>(
+                      valueListenable: _tagError,
+                      builder: (context, error, child) {
+                        return error != null
+                            ? Padding(
+                                padding: EdgeInsets.only(left: 10),
+                                child: Text(
+                                  error,
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 12,
+                                    color: Colors.red[900],
+                                    fontWeight: FontWeight.bold
+                                  ),
+                                ),
+                              )
+                            : SizedBox.shrink();
+                      },
+                    ),
+                  ],
                 ),
                 SizedBox(height: 10),
 
+                // Tag Buttons
                 ValueListenableBuilder<String>(
-  valueListenable: selectedTag,
-  builder: (context, selected, child) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          
-          children: [
-            _buildTagButton("Home", Icons.home, selected, selectedTag),
-            SizedBox(width: 20), // Space between buttons
-            _buildTagButton("Work", Icons.work, selected, selectedTag),
-          ],
-        ),
-        SizedBox(height: 15), // Space between rows
-        Row(
-          
-          children: [
-            _buildTagButton("Friends and Family", Icons.group, selected, selectedTag),
-            SizedBox(width: 20), // Space between buttons
-            _buildTagButton("Other", Icons.location_on, selected, selectedTag), // Location marker icon for 'Other'
-          ],
-        ),
-      ],
-    );
-  },
-),
+                  valueListenable: selectedTag,
+                  builder: (context, selected, child) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            _buildTagButton("Home", Icons.home, selected, selectedTag),
+                            SizedBox(width: 20),
+                            _buildTagButton("Work", Icons.work, selected, selectedTag),
+                          ],
+                        ),
+                        SizedBox(height: 15),
+                        Row(
+                          children: [
+                            _buildTagButton("Friends and Family", Icons.group, selected, selectedTag),
+                            SizedBox(width: 20),
+                            _buildTagButton("Other", Icons.location_on, selected, selectedTag),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
                 SizedBox(height: 20),
+
+                // Submit Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green, // Match image color
+                      backgroundColor: Colors.green,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                       padding: EdgeInsets.symmetric(vertical: 16),
                     ),
                     onPressed: () async {
-                      // Handle button press
+                      // Validate House/Flat/Block No.
                       if (_houseController.text.isEmpty) {
-    // Show an error message if the field is empty
-        setState(() {
-      _errorText = _houseController.text.isEmpty ? "This field cannot be empty" : null;
-                      });
-    // ScaffoldMessenger.of(context).showSnackBar(
-    //   SnackBar(content: Text("Please enter House/Flat/Block No.")),
-    // );
-    return;
-  }
+                        _houseError.value = "This field is required";
+                      } else {
+                        _houseError.value = null;
+                      }
 
-  if (selectedTag.value.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Please select a tag (Home, Work, etc.)")),
+                      // Validate Tag Selection
+                      if (selectedTag.value.isEmpty) {
+                        _tagError.value = "*Select any one from below";
+                      } else {
+                        _tagError.value = null;
+                      }
+
+                      // If both validations pass, proceed
+                  if (_houseController.text.isNotEmpty && selectedTag.value.isNotEmpty) {
+    // Save the user response
+    await _saveUserResponse(
+      locationName: _locationName,
+      locationAddress: _locationAddress,
+      houseFlatBlockNo: _houseController.text,
+      apartmentRoadArea: _apartmentController.text, // Add this controller if needed
+      directionsToReach: _directionsController.text,
+      selectedTag: selectedTag.value,
     );
-    return;
+
+    // Handle successful submission
+  print("Location Name: ${_locationName}");
+  print("Location Address: ${_locationAddress}");
+  print("House/Flat/Block No.: ${_houseController.text}");
+  print("Apartment/Road/Area: ${_apartmentController.text}");
+  print("Directions to Reach: ${_directionsController.text}");
+  print("Selected Tag: ${selectedTag.value}");
   }
 
 
-  // Show success message
                     },
                     child: Text(
                       "ENTER HOUSE / FLAT / BLOCK NO.",
@@ -872,7 +995,7 @@ Future<void> _loadSavedRecording() async {
                     ),
                   ),
                 ),
-                SizedBox(height: MediaQuery.of(context).viewInsets.bottom), // Prevent keyboard overlap
+                SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
               ],
             ),
           ),
@@ -887,13 +1010,13 @@ Widget _buildTagButton(String label, IconData icon, String selected, ValueNotifi
 
   return GestureDetector(
     onTap: () {
-      notifier.value = isSelected ? "" : label; // Toggle selection
+      notifier.value = isSelected ? "" : label;
     },
     child: Container(
       padding: EdgeInsets.symmetric(vertical: 10, horizontal: 20),
       decoration: BoxDecoration(
         color: isSelected ? Colors.green.withOpacity(0.2) : Colors.grey[200],
-        borderRadius: BorderRadius.circular(50), // Rounded corners
+        borderRadius: BorderRadius.circular(50),
         border: Border.all(
           color: isSelected ? Colors.black : Colors.grey,
           width: 1.5,
