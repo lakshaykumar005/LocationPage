@@ -1,0 +1,18 @@
+[
+  {
+    "locationName": "Tirumalai Priya Nagar",
+    "locationAddress": "Tirumalai Priya Nagar, Chennai, Tamil Nadu, 600053, India",
+    "houseFlatBlockNo": "no.3",
+    "apartmentRoadArea": "Rahul street",
+    "directionsToReach": "",
+    "selectedTag": "Home"
+  },
+  {
+    "locationName": "Phoenix Market City",
+    "locationAddress": "Phoenix Market City, Velachery Road, Chennai, Tamil Nadu, 600042, India",
+    "houseFlatBlockNo": "4",
+    "apartmentRoadArea": "",
+    "directionsToReach": "",
+    "selectedTag": "Home"
+  }
+]

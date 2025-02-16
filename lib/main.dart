@@ -1,8 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -11,50 +12,12 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_places_flutter/google_places_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Future<File> _getJsonFile() async {
-  // Get the application documents directory
-  Directory appDir = await getApplicationDocumentsDirectory();
-  
-  // Define the path to the JSON file
-  String jsonFilePath = '${appDir.path}/user_responses.json';
-  
-  // Create the file if it doesn't exist
-  File jsonFile = File(jsonFilePath);
-  if (!await jsonFile.exists()) {
-    await jsonFile.writeAsString('[]'); // Initialize with an empty array
-  }
-  
-  return jsonFile;
-}
-Future<List<dynamic>> _readJsonFile() async {
-  // Get the JSON file
-  File jsonFile = await _getJsonFile();
-  
-  // Read the file content
-  String jsonString = await jsonFile.readAsString();
-  
-  // Decode the JSON string into a List
-  List<dynamic> jsonData = jsonDecode(jsonString);
-  
-  return jsonData;
-}
 
-Future<void> _writeJsonFile(List<dynamic> jsonData) async {
-  // Get the JSON file
-  File jsonFile = await _getJsonFile();
-  
-  // Encode the updated data to a JSON string
-  String updatedJsonString = jsonEncode(jsonData);
-  
-  // Write the updated JSON string to the file
-  await jsonFile.writeAsString(updatedJsonString);
-  
-  print("JSON file updated successfully.");
-}
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
@@ -612,27 +575,25 @@ void _showModalBottomSheet(BuildContext context) {
   String? directionsToReach,
   required String selectedTag,
 }) async {
-  // Read the existing JSON data
-  List<dynamic> jsonData = await _readJsonFile();
+  final url = Uri.parse('http://192.168.0.3:3000/save-location');
+  final response = await http.post(
+    url,
+    headers: {'Content-Type': 'application/json'},
+    body: json.encode({
+      'locationName': locationName,
+      'locationAddress': locationAddress,
+      'houseFlatBlockNo': houseFlatBlockNo,
+      'apartmentRoadArea': apartmentRoadArea,
+      'directionsToReach': directionsToReach,
+      'selectedTag': selectedTag,
+    }),
+  );
 
-  // Create a new response object
-  Map<String, dynamic> newResponse = {
-    "locationName": locationName,
-    "locationAddress": locationAddress,
-    "houseFlatBlockNo": houseFlatBlockNo,
-    "apartmentRoadArea": apartmentRoadArea,
-    "directionsToReach": directionsToReach,
-    "selectedTag": selectedTag,
-  };
-
-  // Add the new response to the existing data
-  jsonData.add(newResponse);
-
-  // Write the updated data back to the file
-  await _writeJsonFile(jsonData);
-
-  File jsonFile = await _getJsonFile();
-  print("User response saved to JSON file at: ${jsonFile.path}");
+  if (response.statusCode == 200) {
+    print('Data saved successfully');
+  } else {
+    print('Failed to save data');
+  }
 }
 
   _initRecorder();
